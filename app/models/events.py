@@ -68,19 +68,38 @@ def fetch_latest_event_sequence(aggregate_id):
     finally:
         db.close()
 
-def fetch_product_by_id(aggregate_id):
+def fetch_event_by_id(aggregate_id):
     db = SessionLocal()
 
     try:
-        product = (
+        event = (
             db.query(Event)
             .filter(Event.aggregate_id == aggregate_id)
             .first()
         )
-        if product:
-            return product
+        if event:
+            return event
         else:
-            raise Exception(f"No ")
+            raise Exception(f"No event available with given id")
+    except Exception as e:
+        raise e
+    finally:
+        db.close()
+
+def fetch_all_events(aggregate_id):
+    db = SessionLocal()
+
+    try:
+        events = (
+            db.query(Event)
+            .filter(Event.aggregate_id == aggregate_id)
+            .order_by(Event.event_sequence.asc())
+            .all()
+        )
+        if events:
+            return events
+        else:
+            raise Exception(f"No event available with given id")
     except Exception as e:
         raise e
     finally:

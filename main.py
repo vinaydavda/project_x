@@ -3,7 +3,7 @@ import uvicorn
 import logging
 from fastapi import FastAPI
 from pydantic import BaseModel
-from app.models.events import create_event, fetch_latest_event_sequence
+from app.models.events import create_event, fetch_latest_event_sequence, fetch_all_events
 from sqlalchemy import func
 
 _logger = logging.getLogger(__name__)
@@ -17,17 +17,55 @@ class Product(BaseModel):
 products_db: dict[Product] = {}
 latest_id = 0
 
-def get_event_data(aggregate_id, latest_event_sequence, event_type, product_data):
-    return {
+def get_current_state(aggregate_id):
+    product = {
+        "exists": False,
+        "deleted": False,
+        "name": None,
+        "price": None,
+    }
+
+    events = fetch_all_events(aggregate_id)
+
+    for event in events:
+
+        if event.event_type == "PRODUCT_CREATE":
+            product["exists"] = True
+            product["deleted"] = False
+            product["name"] = event.event_data["name"]
+            product["price"] = event.event_data["price"]
+
+        elif event.event_type == "PRODUCT_UPDATE":
+            product["name"] = event.event_data["name"]
+            product["price"] = event.event_data["price"]
+
+        elif event.event_type == "PRODUCT_DELETE":
+            product["deleted"] = True
+            break
+
+    return product
+
+def get_event_data(aggregate_id, latest_event_sequence, event_type, product_data=None):
+    event_data = {
         "event_id": aggregate_id,
         "event_name": "product",
         "event_type": event_type,
         "event_sequence": latest_event_sequence + 1,
-        "event_data": {
-            "name": product_data.name,
-            "price": product_data.price
-        }
     }
+    if event_type in ("PRODUCT_CREATE", "PRODUCT_UPDATE"):
+        event_data.update({
+            "event_data": {
+                "name": product_data.name,
+                "price": product_data.price
+            }
+        })
+    elif event_type == "PRODUCT_DELETE":
+        event_data.update({
+            "event_data": {
+                "product_id": aggregate_id
+            }
+        })
+    return event_data
 
 # GET - Home page
 @app.get("/")
@@ -62,11 +100,11 @@ def add_product(product_data: Product):
         return {"success": False, "error": "Error adding products"}
     
 @app.put("/products/{product_id}")
-def update_product(product_id: int, product_data: Product):
+def update_product(product_id: str, product_data: Product):
     try:
-        latest_event_sequence = fetch_latest_event_sequence(product_id)  # Add product will be first event on a product
-        
-        if latest_event_sequence:
+        current_state = get_current_state(product_id)
+        if current_state and current_state["exists"] and not current_state["deleted"]:
+            latest_event_sequence = fetch_latest_event_sequence(product_id)
             event_data = get_event_data(product_id, latest_event_sequence, "PRODUCT_UPDATE", product_data)
             create_event(event_data)
             return {"success": True, "product_id": product_id}
@@ -74,14 +112,14 @@ def update_product(product_id: int, product_data: Product):
             return {"success": False, "error": "Product not found"}
     except Exception as e:
         _logger.error(f"> [ERROR] - Error updating products: {e}")
-        return {"success": False, "error": "Error updating update"}
+        return {"success": False, "error": "Error updating product"}
     
 @app.delete("/products/{product_id}")
-def delete_product(product_id: int):
+def delete_product(product_id: str):
     try:
-        latest_event_sequence = fetch_latest_event_sequence(product_id)  # Add product will be first event on a product
-        
-        if latest_event_sequence:
+        current_state = get_current_state(product_id)
+        if current_state and current_state["exists"] and not current_state["deleted"]:
+            latest_event_sequence = fetch_latest_event_sequence(product_id)  # Add product will be first event on a product
             event_data = get_event_data(product_id, latest_event_sequence, "PRODUCT_DELETE")
             create_event(event_data)
             return {"success": True, "product_id": product_id}
