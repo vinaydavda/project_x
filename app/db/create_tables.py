@@ -1,3 +1,5 @@
+# Running this file initiates tables in database
+
 import logging
 from app.db.postgres import engine, Base
 from app.models.events import Event

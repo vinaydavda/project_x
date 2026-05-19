@@ -4,10 +4,20 @@ import logging
 from fastapi import FastAPI
 from pydantic import BaseModel
 from app.models.events import create_event, fetch_latest_event_sequence, fetch_all_events
+from app.messaging.rabbitmq import publish_event, connect_rabbitmq, close_rabbitmq
 from sqlalchemy import func
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Fastapi startup
+    connect_rabbitmq()
+    yield
+    # Fastapi shutdown
+    close_rabbitmq()
 
 _logger = logging.getLogger(__name__)
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 # Product model declaration
 class Product(BaseModel):
@@ -16,6 +26,7 @@ class Product(BaseModel):
 
 products_db: dict[Product] = {}
 latest_id = 0
+
 
 def get_current_state(aggregate_id):
     product = {
@@ -91,9 +102,11 @@ def add_product(product_data: Product):
     try:
         latest_event_sequence = 0  # Add product will be first event on a product
         aggregate_id = f"product_{str(uuid.uuid4())}"
-        event_data = get_event_data(aggregate_id, latest_event_sequence, "PRODUCT_CREATE", product_data)
+        event_constant = "PRODUCT_CREATE"
+        event_data = get_event_data(aggregate_id, latest_event_sequence, event_constant, product_data)
         
         create_event(event_data)
+        publish_event("product_events", event_data)
         return {"success": True, "product_id": aggregate_id}
     except Exception as e:
         _logger.error(f"> [ERROR] - Error adding products: {e}")
@@ -104,9 +117,11 @@ def update_product(product_id: str, product_data: Product):
     try:
         current_state = get_current_state(product_id)
         if current_state and current_state["exists"] and not current_state["deleted"]:
+            event_constant = "PRODUCT_UPDATE"
             latest_event_sequence = fetch_latest_event_sequence(product_id)
-            event_data = get_event_data(product_id, latest_event_sequence, "PRODUCT_UPDATE", product_data)
+            event_data = get_event_data(product_id, latest_event_sequence, event_constant, product_data)
             create_event(event_data)
+            publish_event("product_events", event_data)
             return {"success": True, "product_id": product_id}
         else:
             return {"success": False, "error": "Product not found"}
@@ -119,9 +134,11 @@ def delete_product(product_id: str):
     try:
         current_state = get_current_state(product_id)
         if current_state and current_state["exists"] and not current_state["deleted"]:
+            event_constant = "PRODUCT_DELETE"
             latest_event_sequence = fetch_latest_event_sequence(product_id)  # Add product will be first event on a product
-            event_data = get_event_data(product_id, latest_event_sequence, "PRODUCT_DELETE")
+            event_data = get_event_data(product_id, latest_event_sequence, event_constant)
             create_event(event_data)
+            publish_event("product_events", event_data)
             return {"success": True, "product_id": product_id}
         else:
             return {"success": False, "error": "Product not found"}
