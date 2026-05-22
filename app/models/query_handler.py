@@ -23,14 +23,15 @@ def delete_product(product_id):
     )
 
 
-def get_product(product_id):
-    return products_collection.find_one({
-        "id": product_id
-    })
-
-
-def get_all_products(limit=None):
-    result = products_collection.find().sort("name",1)
-    if limit:
-        return result.limit(limit)
-    return result
+def get_product(product_id: str | None = None, limit: int | None = None):
+    if product_id:
+        return products_collection.find_one({
+            "id": product_id,
+            "active": True
+        },
+        {"_id": 0})  # Exclude _id - internal id
+    else:
+        result = list(products_collection.find({"active": True}, {"_id": 0}).sort("name",1))
+        if limit:
+            return result.limit(limit)
+        return result

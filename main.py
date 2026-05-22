@@ -5,17 +5,21 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from app.models.events import create_event, fetch_latest_event_sequence, fetch_all_events
 from app.messaging.rabbitmq import publish_event, connect_rabbitmq, close_rabbitmq
+from app.models.query_handler import get_product
+from app.db.create_tables import create_tables
 from sqlalchemy import func
 from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Fastapi startup
+    create_tables()
     connect_rabbitmq()
     yield
     # Fastapi shutdown
     close_rabbitmq()
 
+logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
 app = FastAPI(lifespan=lifespan)
 
@@ -87,9 +91,12 @@ def get_home():
 
 # GET - all products
 @app.get("/products")
-def read_products():
+def read_products(
+    product_id: str | None = None,
+    limit: int | None = None
+):
     try:
-        return {"success": True, "data": products_db}
+        return get_product(product_id, limit)
     except Exception as e:
         _logger.error(f"> [ERROR] - Error returning products: {e}")
         return {"success": False, "error": "Error returning products"}

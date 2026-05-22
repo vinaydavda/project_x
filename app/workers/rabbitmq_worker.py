@@ -1,17 +1,32 @@
+import os
+import time
 import json
 import pika
 import logging
 from app.models.query_handler import create_product, update_product, delete_product
+from dotenv import load_dotenv
 
+load_dotenv()
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST")
+
+logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger(__name__)
 
-connection = pika.BlockingConnection(
-    pika.ConnectionParameters("localhost")
-)
+while True:
+    try:
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(RABBITMQ_HOST, heartbeat=600, blocked_connection_timeout=300)
+        )
+        _logger.info(f"[READ DB] - Connected to rabbitmq")
+        break
+    except Exception as e:
+        _logger.error(f"[READ DB] - Rabbitmq connection issue, retrying...: {e}")
+        time.sleep(5)
 
 channel = connection.channel()
 
-channel.queue_declare(queue="product_events")
+channel.queue_declare(queue="product_events", durable=True)
+channel.basic_qos(prefetch_count=1)
 
 
 def callback(ch, method, properties, body):
@@ -30,7 +45,7 @@ def callback(ch, method, properties, body):
     try:
         _logger.info(f">> Received... {body}")
 
-        body = json.loads(body)
+        body = json.loads(body.decode())
         event_data = body["event_data"]
         event_data["id"] = body["event_id"]
         
@@ -45,14 +60,19 @@ def callback(ch, method, properties, body):
         elif body["event_type"] == "PRODUCT_DELETE":
             delete_product(event_data["id"])
 
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
     except Exception as e:
         _logger.error(f"[READ DB] - Error while operating on Read DB: {e}")
-
+        ch.basic_nack(
+            delivery_tag=method.delivery_tag,
+            requeue=True
+        )
 
 channel.basic_consume(
     queue="product_events",
     on_message_callback=callback,
-    auto_ack=True
+    auto_ack=False
 )
 
 _logger.info(f"[READ DB] - Worker Started...")
